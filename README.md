@@ -69,7 +69,7 @@
 1. **克隆或下载项目**
 
    ```bash
-   git clone https://github.com/your-username/VK-Video-Download.git
+   git clone https://github.com/huoyart/VK-Video-Download.git
    cd VK-Video-Download
    ```
 
