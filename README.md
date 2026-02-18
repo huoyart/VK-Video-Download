@@ -3,6 +3,7 @@
 ![Version](https://img.shields.io/badge/version-2.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.6+-green.svg)
 ![License](https://img.shields.io/badge/license-Non--commercial-red.svg)
+<img width="816" height="469" alt="image" src="https://github.com/user-attachments/assets/ca2b96ad-ded8-4355-87bd-6b28b2692363" />
 
 ## 📖 简介
 
