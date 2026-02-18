@@ -1,5 +1,22 @@
-yt_dlp
-tkinter
-requests
-webbrowser
-threading 
+# VK Video Downloader 依赖包
+# Python 3.6+
+
+# 视频下载核心库
+yt-dlp>=2023.11.16
+
+# HTTP 请求库（用于网络请求）
+requests>=2.28.0
+
+# 打包工具（可选，仅用于打包发行版）
+# pyinstaller>=5.13.0
+
+# 注意：
+# - tkinter 是 Python 标准库，通常随 Python 一起安装
+#   如果系统没有 tkinter，请使用系统包管理器安装：
+#   Ubuntu/Debian: sudo apt-get install python3-tk
+#   Fedora: sudo dnf install python3-tkinter
+#   macOS: 通常已包含，如没有请安装 Python 完整版
+#   Windows: 通常已包含在 Python 安装包中
+#
+# - threading, webbrowser, logging, os, random, string, datetime, re, sys, time, platform
+#   这些都是 Python 标准库，无需单独安装
