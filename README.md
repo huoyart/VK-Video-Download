@@ -69,42 +69,33 @@
 ### 安装步骤
 
 1. **克隆或下载项目**
-<<<<<<< HEAD
+
    ```bash
    git clone https://github.com/your-username/VK-Video-Download.git
-=======
+	```
 
    ```bash
    git clone https://github.com/huoyart/VK-Video-Download.git
->>>>>>> cb37053091bfb150fd6bc434261d4ce1a8d4842a
    cd VK-Video-Download
    ```
 
 2. **安装依赖**
-<<<<<<< HEAD
-   ```bash
-   pip install -r requirements.txt
-   ```
+
+	```bash
+	pip install -r requirements.txt
+	```
    
    或者单独安装 yt-dlp：
-=======
-
    ```bash
    pip install -r requirements.txt
    ```
 
    或者单独安装 yt-dlp：
-
->>>>>>> cb37053091bfb150fd6bc434261d4ce1a8d4842a
    ```bash
    pip install yt-dlp
    ```
 
 3. **运行程序**
-<<<<<<< HEAD
-=======
-
->>>>>>> cb37053091bfb150fd6bc434261d4ce1a8d4842a
    ```bash
    python vk_video_download.py
    ```
@@ -146,10 +137,9 @@
 ### 代理格式
 
 支持的代理格式：
-<<<<<<< HEAD
-=======
 
->>>>>>> cb37053091bfb150fd6bc434261d4ce1a8d4842a
+
+
 - HTTP: `http://proxy.example.com:8080`
 - HTTPS: `https://proxy.example.com:8080`
 - SOCKS5: `socks5://proxy.example.com:1080`
@@ -179,19 +169,18 @@ pyinstaller vk_video_download.py --noconsole --onefile --icon=theme/icon.ico
 ## ❓ 常见问题
 
 ### Q: 视频无法下载？
-<<<<<<< HEAD
 A: 可能的原因：
-=======
+
 
 A: 可能的原因：
 
->>>>>>> cb37053091bfb150fd6bc434261d4ce1a8d4842a
+
 - 视频设置了访问权限，需要登录或授权
 - 视频格式或来源不被 yt-dlp 支持
 - 网络连接问题，尝试使用代理
 
 ### Q: 下载的文件扩展名是 .unknown_video？
-<<<<<<< HEAD
+
 A: 可以手动将文件重命名为 .mp4，通常可以正常播放
 
 ### Q: 如何查看下载日志？
@@ -201,7 +190,6 @@ A: 日志文件保存在程序目录下的 `vk_video_download.log`
 A: 程序会自动尝试加载 .png 格式的图标，如果仍无法显示，这是正常的，不影响使用
 
 ### Q: 可以同时下载多少个视频？
-=======
 
 A: 可以手动将文件重命名为 .mp4，通常可以正常播放
 
@@ -215,7 +203,7 @@ A: 程序会自动尝试加载 .png 格式的图标，如果仍无法显示，�
 
 ### Q: 可以同时下载多少个视频？
 
->>>>>>> cb37053091bfb150fd6bc434261d4ce1a8d4842a
+
 A: 默认最多同时下载 3 个视频，这是为了避免过载
 
 ## 📝 更新日志
@@ -223,19 +211,12 @@ A: 默认最多同时下载 3 个视频，这是为了避免过载
 ### 版本 2.0（中文版）
 
 **新增功能：**
-<<<<<<< HEAD
-=======
 
->>>>>>> cb37053091bfb150fd6bc434261d4ce1a8d4842a
 - ✨ 完全中文化界面和提示
 - ✨ 新增代理设置功能
 - ✨ 优化跨平台图标加载
 
 **改进：**
-<<<<<<< HEAD
-=======
-
->>>>>>> cb37053091bfb150fd6bc434261d4ce1a8d4842a
 - 🔧 改进错误处理机制
 - 🔧 优化日志记录格式
 - 🔧 改进界面布局
