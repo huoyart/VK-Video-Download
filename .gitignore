@@ -3,3 +3,6 @@ dist
 vk_video_download.log
 app_screen.jpg
 icon.png
+__pycache__/
+*.py[cod]
+.pytest_cache/

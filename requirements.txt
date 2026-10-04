@@ -1,5 +1,5 @@
 # VK Video Downloader 依赖包
-# Python 3.6+
+# Python 3.10+
 
 # 视频下载核心库
 yt-dlp>=2023.11.16
