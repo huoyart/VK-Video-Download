@@ -11,7 +11,7 @@ import webbrowser
 from download_core import DownloadManager, DownloadOptions, TERMINAL
 from download_utils import format_size, sanitize_filename, validate_proxy
 
-currentVersion = '2.1'
+currentVersion = '2.2'
 PROJECT_URL = 'https://github.com/huoyart/VK-Video-Download'
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 RESOURCE_DIR = Path(getattr(sys, '_MEIPASS', APP_DIR))
@@ -96,12 +96,19 @@ class App(ttk.Frame):
                                                ('标题最多 50 字符', self.var_limit_length),
                                                ('每个视频独立文件夹', self.var_folder))):
             ttk.Checkbutton(self.check_frame, text=label, variable=var).grid(row=0, column=column, padx=(0, 14))
-        ttk.Label(self.check_frame, text='64 MiB/片 · 并发：').grid(row=0, column=3)
+        self.split_frame = ttk.Frame(self.check_frame)
+        self.split_frame.grid(row=1, column=0, columnspan=3, sticky='w', pady=(6, 0))
+        self.var_auto_split = tk.BooleanVar(value=True)
+        self.auto_split_check = ttk.Checkbutton(self.split_frame, text='自动分片（目标64 MiB）',
+                                               variable=self.var_auto_split)
+        self.auto_split_check.grid(row=0, column=0, padx=(0, 14))
+        ttk.Label(self.split_frame, text='下载线程：').grid(row=0, column=1)
         self.fragments_var = tk.StringVar(value='4')
-        self.fragments_combo = ttk.Combobox(self.check_frame, textvariable=self.fragments_var,
+        self.fragments_combo = ttk.Combobox(self.split_frame, textvariable=self.fragments_var,
                                             values=('1', '2', '4', '8'), state='readonly', width=3,
                                             style='Download.TCombobox')
-        self.fragments_combo.grid(row=0, column=4)
+        self.fragments_combo.grid(row=0, column=2)
+        ttk.Label(self.split_frame, text='取消勾选：固定 64 MiB/片').grid(row=0, column=3, padx=(14, 0))
 
         self.proxy_frame = ttk.Frame(frame)
         self.proxy_frame.grid(row=4, column=0, sticky='ew', pady=(6, 12))
@@ -153,8 +160,10 @@ class App(ttk.Frame):
         if self._closing:
             return
         try:
-            options = DownloadOptions(self.download_dir, self.var_random_name.get(),
-                self.var_limit_length.get(), self.var_folder.get(), self.get_proxy_url(), int(self.fragments_var.get()))
+            options = DownloadOptions(directory=self.download_dir, random_name=self.var_random_name.get(),
+                limit_length=self.var_limit_length.get(), use_folder=self.var_folder.get(),
+                proxy=self.get_proxy_url(), fragments=int(self.fragments_var.get()),
+                auto_split=self.var_auto_split.get())
             jobs = self.manager.submit(self.entry_nm.get('1.0', 'end'), options)
             if not jobs:
                 self.set_status_error('这些链接已在下载或排队中')
@@ -237,7 +246,19 @@ class App(ttk.Frame):
         job_id = self.tree.identify_row(event.y)
         for job in self.manager.snapshot():
             if job.id == job_id:
-                messagebox.showinfo('任务详情', f'{job.title or job.url}\n{STATUS[job.status]}\n{job.error}', parent=self.root)
+                details = [job.title or job.url, STATUS[job.status]]
+                part_count = getattr(job, 'part_count', 0)
+                active_workers = getattr(job, 'active_workers', 0)
+                part_size = getattr(job, 'part_size', 0)
+                if part_count:
+                    details.append(f'实际分片数：{part_count}')
+                if active_workers:
+                    details.append(f'实际工作线程：{active_workers}')
+                if part_size:
+                    details.append(f'最大片大小：{format_size(part_size)}（{part_size} 字节）')
+                if job.error:
+                    details.append(job.error)
+                messagebox.showinfo('任务详情', '\n'.join(details), parent=self.root)
                 break
 
     def clear_finished(self):

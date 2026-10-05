@@ -48,6 +48,7 @@ class DownloadOptions:
     use_folder: bool = False
     proxy: str | None = ''  # None=使用系统代理，''=明确直连
     fragments: int = 4
+    auto_split: bool = True
 
 
 @dataclass
@@ -70,6 +71,9 @@ class DownloadJob:
     rate_at: float = 0.0
     rate_bytes: int = 0
     retryable: bool = False
+    part_count: int = 0
+    part_size: int = 0
+    active_workers: int = 0
 
 
 class DownloadManager:
@@ -94,6 +98,8 @@ class DownloadManager:
         urls = parse_video_urls(text)
         if options.fragments not in (1, 2, 4, 8):
             raise ValueError('分片并发数应为 1、2、4 或 8')
+        if type(options.auto_split) is not bool:
+            raise ValueError('自动分片选项应为布尔值')
         options = replace(options, proxy=validate_proxy(options.proxy) if options.proxy is not None else None)
         with self._lock:
             if self._closing.is_set():
@@ -267,6 +273,13 @@ class DownloadManager:
             job.eta = None
             self._publish(job)
 
+    def _range_plan(self, job, plan, workers):
+        with self._lock:
+            job.part_count = plan.count
+            job.part_size = plan.max_part_size
+            job.active_workers = workers
+            self._publish(job)
+
     def _worker(self):
         while not self._closing.is_set():
             try:
@@ -311,6 +324,8 @@ class DownloadManager:
     def _download(self, job):
         try:
             self._check_cancel(job)
+            with self._lock:
+                job.part_count = job.part_size = job.active_workers = 0
             Path(job.options.directory).mkdir(parents=True, exist_ok=True)
             options = {
                 'outtmpl': job.output_template,
@@ -335,7 +350,7 @@ class DownloadManager:
             # None=系统代理：不传 proxy，由 yt-dlp/环境变量发现；''=明确直连。
             if job.options.proxy is not None:
                 options['proxy'] = job.options.proxy
-            # 普通 HTTP 媒体按 64 MiB Range 分片；HLS/DASH 保留站点原生分片。
+            # 普通 HTTP 支持自动/固定 Range 分片；HLS/DASH 保留站点原生分片。
             with self._factory(options) as downloader:
                 if hasattr(downloader, 'extract_info') and hasattr(downloader, 'process_info'):
                     info = downloader.extract_info(job.url, download=False)
@@ -357,13 +372,15 @@ class DownloadManager:
                                        and media_url.startswith(('http://', 'https://')))
                         source = range_download.probe(media_url, info.get('http_headers'), job.options.proxy,
                             stop=job.stop, pause=job.pause) if progressive else None
-                        if source and source.size > range_download.CHUNK_SIZE:
+                        if source and source.size > 0 and (job.options.auto_split or source.size > range_download.CHUNK_SIZE):
                             with self._lock:
                                 job.total = source.size
                                 self._publish(job)
                             range_download.download(source, downloader.prepare_filename(info),
                                 headers=info.get('http_headers'), proxy=job.options.proxy,
                                 stop=job.stop, pause=job.pause, max_workers=job.options.fragments,
+                                auto_split=job.options.auto_split,
+                                on_plan=lambda plan, workers: self._range_plan(job, plan, workers),
                                 on_progress=lambda done, total: self._progress(job, {
                                     'status': 'downloading', 'downloaded_bytes': done,
                                     'total_bytes': total, 'info_dict': info}),

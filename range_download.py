@@ -1,5 +1,5 @@
-"""普通 HTTP 视频的 64 MiB Range 并发下载及可续传合并。"""
-from concurrent.futures import ThreadPoolExecutor, as_completed
+"""普通 HTTP 视频的自动 Range 分片、并发下载及可续传合并。"""
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 import hashlib
@@ -27,6 +27,66 @@ class RangeSource:
     url: str
     size: int
     etag: str | None
+
+
+@dataclass(frozen=True)
+class PartPlan:
+    size: int
+    count: int
+    chunk_size: int | None = None  # None=均匀分片；非空=旧固定片长布局
+
+    def bounds(self, index):
+        if not 0 <= index < self.count:
+            raise ValueError('已有分片编号超出布局范围')
+        if self.chunk_size is not None:
+            start = index * self.chunk_size
+            return start, min(self.size, start + self.chunk_size) - 1
+        quotient, remainder = divmod(self.size, self.count)
+        start = index * quotient + min(index, remainder)
+        return start, start + quotient + (index < remainder) - 1
+
+    @property
+    def max_part_size(self):
+        return min(self.chunk_size, self.size) if self.chunk_size is not None else (self.size + self.count - 1) // self.count
+
+    def to_dict(self):
+        layout = {'mode': 'fixed' if self.chunk_size is not None else 'balanced', 'count': self.count}
+        if self.chunk_size is not None:
+            layout['chunk_size'] = self.chunk_size
+        return layout
+
+
+def plan_chunks(size, max_workers=MAX_WORKERS, chunk_size=None, auto_split=True):
+    """新任务至少一片/有效线程，目标片长不超过 64 MiB，均匀覆盖所有字节。"""
+    chunk_size = CHUNK_SIZE if chunk_size is None else chunk_size
+    if any(type(value) is not int or value < 1 for value in (size, max_workers, chunk_size)):
+        raise ValueError('无效的分片配置')
+    count = (size + chunk_size - 1) // chunk_size
+    if auto_split:
+        count = min(size, max(max_workers, count))
+        return PartPlan(size, count)
+    return PartPlan(size, count, chunk_size)
+
+
+def _saved_plan(size, layout):
+    if not isinstance(layout, dict) or type(layout.get('count')) is not int or not 1 <= layout['count'] <= size:
+        raise ValueError('已有分片布局无效')
+    if layout.get('mode') == 'balanced':
+        return PartPlan(size, layout['count'])
+    if layout.get('mode') == 'fixed':
+        chunk_size = layout.get('chunk_size')
+        if type(chunk_size) is int and chunk_size > 0 and (size + chunk_size - 1) // chunk_size == layout['count']:
+            return PartPlan(size, layout['count'], chunk_size)
+    raise ValueError('已有分片布局无效')
+
+
+def _validate_parts(parts_dir, plan):
+    for path in parts_dir.glob('*.part'):
+        if not re.fullmatch(r'\d{6,}', path.stem):
+            raise ValueError('已有分片名称无效')
+        first, last = plan.bounds(int(path.stem))
+        if path.stat().st_size > last - first + 1:
+            raise ValueError('已有分片长度与远程文件不匹配')
 
 
 def _session(proxy):
@@ -78,7 +138,7 @@ def probe(url, headers=None, proxy=None, stop=None, pause=None):
             _wait_retry(attempt, stop, pause)
 
 
-def _validate_rotated_url(parts_dir, source, chunk_size, headers, proxy):
+def _validate_rotated_url(parts_dir, source, plan, headers, proxy):
     """签名 URL 更新时，用每个已有分片的头尾字节确认仍为同一资源。"""
     paths = sorted(parts_dir.glob('*.part'))
     if not paths:
@@ -89,8 +149,8 @@ def _validate_rotated_url(parts_dir, source, chunk_size, headers, proxy):
                 index = int(path.stem)
             except ValueError:
                 raise ValueError('已有分片名称无效') from None
-            start = index * chunk_size
-            expected = min(chunk_size, source.size - start)
+            start, end = plan.bounds(index)
+            expected = end - start + 1
             length = path.stat().st_size
             if expected <= 0 or length > expected:
                 raise ValueError('已有分片长度与远程文件不匹配')
@@ -118,47 +178,56 @@ def _validate_rotated_url(parts_dir, source, chunk_size, headers, proxy):
 
 
 def download(source, destination, headers=None, proxy=None, stop=None, pause=None,
-             on_progress=None, on_merge=None, chunk_size=CHUNK_SIZE, max_workers=MAX_WORKERS):
+             on_progress=None, on_merge=None, chunk_size=None, max_workers=MAX_WORKERS,
+             auto_split=True, on_plan=None):
     """每片以独立 part 文件保存；重试可续写，全部成功后顺序合并并原子替换。"""
-    if chunk_size < 1 or max_workers < 1 or source.size < 1:
-        raise ValueError('无效的分片配置')
+    plan = plan_chunks(source.size, max_workers, chunk_size, auto_split)
+    chunk_size = CHUNK_SIZE if chunk_size is None else chunk_size
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     parts_dir = Path(str(destination) + '.vkparts')
     parts_dir.mkdir(parents=True, exist_ok=True)
-    count = (source.size + chunk_size - 1) // chunk_size
     manifest = parts_dir / 'manifest.json'
     identity = {'size': source.size, 'etag': source.etag,
                 'url_hash': None if source.etag else hashlib.sha256(source.url.encode('utf-8')).hexdigest()}
     if manifest.exists():
         previous = json.loads(manifest.read_text(encoding='utf-8'))
-        if previous != identity:
-            if previous.get('size') != source.size or (previous.get('etag') and previous['etag'] != source.etag):
-                raise ValueError('远程文件已变化，已有分片需另行处理')
-            _validate_rotated_url(parts_dir, source, chunk_size, headers, proxy)
-            marker = parts_dir / 'manifest.new'
-            marker.write_text(json.dumps(identity), encoding='utf-8')
-            os.replace(marker, manifest)
+        if not isinstance(previous, dict):
+            raise ValueError('已有分片来源校验信息无效')
+        changed_source = {key: previous.get(key) for key in identity} != identity
+        if changed_source and (previous.get('size') != source.size or
+                               (previous.get('etag') and previous['etag'] != source.etag)):
+            raise ValueError('远程文件已变化，已有分片需另行处理')
+        # 降并发、改变自动选项、签名 URL 轮换时均沿用原边界；旧版清单按固定片长升级。
+        plan = (_saved_plan(source.size, previous['layout']) if 'layout' in previous
+                else plan_chunks(source.size, max_workers, chunk_size, auto_split=False))
+        _validate_parts(parts_dir, plan)
+        if changed_source:
+            _validate_rotated_url(parts_dir, source, plan, headers, proxy)
     elif any(parts_dir.glob('*.part')):
         raise ValueError('已有分片缺少来源校验信息')
-    else:
-        marker = parts_dir / 'manifest.new'
-        marker.write_text(json.dumps(identity), encoding='utf-8')
-        os.replace(marker, manifest)
+    identity['layout'] = plan.to_dict()
+    marker = parts_dir / 'manifest.new'
+    marker.write_text(json.dumps(identity), encoding='utf-8')
+    os.replace(marker, manifest)
+    count = plan.count
+    workers = min(max_workers, count)
+    if on_plan:
+        on_plan(plan, workers)
     stop = stop or threading.Event()
     pause = pause or threading.Event()
     lock = threading.Lock()
+    abort = threading.Event()
     transferred = 0
 
     def check_stop():
-        if stop.is_set() or pause.is_set():
+        if stop.is_set() or pause.is_set() or abort.is_set():
             raise TransferStopped()
 
     def get_part(index):
         nonlocal transferred
         check_stop()
-        start = index * chunk_size
-        end = min(source.size, start + chunk_size) - 1
+        start, end = plan.bounds(index)
         expected = end - start + 1
         path = parts_dir / f'{index:06d}.part'
         have = path.stat().st_size if path.exists() else 0
@@ -212,10 +281,22 @@ def download(source, destination, headers=None, proxy=None, stop=None, pause=Non
     transferred = existing
     if on_progress:
         on_progress(transferred, source.size)
-    with ThreadPoolExecutor(max_workers=min(max_workers, count)) as pool:
-        futures = [pool.submit(get_part, index) for index in range(count)]
-        for future in as_completed(futures):
-            future.result()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        indices = iter(range(count))
+        pending = {pool.submit(get_part, next(indices)) for _ in range(workers)}
+        try:
+            while pending:
+                completed, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    future.result()
+                    index = next(indices, None)
+                    if index is not None:
+                        pending.add(pool.submit(get_part, index))
+        except BaseException:
+            abort.set()
+            for future in pending:
+                future.cancel()
+            raise
     check_stop()
     if on_merge:
         on_merge()
